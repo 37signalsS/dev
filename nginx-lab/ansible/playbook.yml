@@ -1,0 +1,33 @@
+---
+- name: Nginx for machine2 and machine3
+  hosts: backend
+  become: true
+
+  tasks:
+    - name: Install nginx using apt
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Ensure web root exists
+      ansible.builtin.file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Sync site content (host-specific index.html) 
+      ansible.builtin.synchronize:
+        src: "files/html/{{ inventory_hostname }}/"
+        dest: /var/www/html/
+        delete: yes
+
+    - name: Start Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+
