@@ -18,12 +18,20 @@
         owner: www-data
         group: www-data
         mode: '0755'
+        
+    - name: Add vagrant user to www-data group
+      ansible.builtin.user:
+        name: vagrant
+        groups: www-data
+        append: yes
 
-    - name: Sync site content (host-specific index.html) 
-      ansible.builtin.synchronize:
+    - name: Copy site content (host-specific index.html)
+      ansible.builtin.copy:
         src: "files/html/{{ inventory_hostname }}/"
         dest: /var/www/html/
-        delete: yes
+        owner: www-data
+        group: www-data
+        mode: '0644'
 
     - name: Start Nginx
       ansible.builtin.service:

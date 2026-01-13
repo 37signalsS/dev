@@ -9,6 +9,12 @@
         state: present
         update_cache: yes
 
+    - name: Allow HTTP traffic on UFW
+      community.general.ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
     - name: Configure Nginx as a load balancer
       ansible.builtin.copy:
         dest: /etc/nginx/sites-available/default

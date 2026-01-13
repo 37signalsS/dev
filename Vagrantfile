@@ -3,6 +3,7 @@
 
 Vagrant.configure("2") do |config|
   config.vm.box = "jtarpley/ubuntu2404_base"
+  config.vm.guest = :ubuntu # Explicitly set guest OS
 
 N = 3
 (1..N).each do |machine_id|
@@ -10,31 +11,29 @@ N = 3
     machine.vm.hostname = "machine#{machine_id}"
     machine.vm.box_check_update = false
     machine.vm.network "private_network", ip: "192.168.77.#{10+machine_id}"
+    
+    machine.vm.provision "shell", inline: "sudo ufw allow 80/tcp"
 
       machine.vm.provider "libvirt" do |libvirt|
-        libvirt.memory = 2144
+        libvirt.memory = 2048
         libvirt.cpus = 2
         libvirt.nic_model_type = "virtio"
         libvirt.random_hostname = false
 
         libvirt.storage_pool_name = "default"
+        libvirt.machine_virtual_size = 10
 
-        libvirt.storage :file,
-          size: "10G",
-          type: "qcow2",
-          bus: "virtio",
-          name: "machine#{machine_id}.qcow2"
       end
 
       if machine_id == 1
          machine.vm.provision :ansible do |ansible|
-           ansible.playbook = "playbook_machine1.yml"
-           ansible.limit = "machine1" 
+           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
+           ansible.playbook = "nginx-lab/ansible/playbook_machine1.yml"
          end
       else
          machine.vm.provision :ansible do |ansible|
-           ansible.playbook = "playbook.yml"
-           ansible.limit = "machine#{machine_id}" 
+           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
+           ansible.playbook = "nginx-lab/ansible/playbook.yml"
          end
       end
     end
