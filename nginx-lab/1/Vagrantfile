@@ -17,7 +17,6 @@ N = 3
       machine.vm.provider "libvirt" do |libvirt|
         libvirt.memory = 2048
         libvirt.cpus = 2
-        libvirt.nic_model_type = "virtio"
         libvirt.random_hostname = false
 
         libvirt.storage_pool_name = "default"
@@ -27,13 +26,13 @@ N = 3
 
       if machine_id == 1
          machine.vm.provision :ansible do |ansible|
-           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
-           ansible.playbook = "nginx-lab/ansible/playbook_machine1.yml"
+           ansible.inventory_path = "inventory.ini"
+           ansible.playbook = "playbook_machine1.yml"
          end
       else
          machine.vm.provision :ansible do |ansible|
-           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
-           ansible.playbook = "nginx-lab/ansible/playbook.yml"
+           ansible.inventory_path = "inventory.ini"
+           ansible.playbook = "playbook.yml"
          end
       end
     end
