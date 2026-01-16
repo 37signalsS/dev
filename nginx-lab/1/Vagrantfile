@@ -3,16 +3,18 @@
 
 Vagrant.configure("2") do |config|
   config.vm.box = "jtarpley/ubuntu2404_base"
-  config.vm.guest = :ubuntu # Explicitly set guest OS
+  config.vm.guest = :ubuntu # Явно указываем гостевую ОС
 
-N = 3
-(1..N).each do |machine_id|
-  config.vm.define "machine#{machine_id}" do |machine|
-    machine.vm.hostname = "machine#{machine_id}"
-    machine.vm.box_check_update = false
-    machine.vm.network "private_network", ip: "192.168.77.#{10+machine_id}"
-    
-    machine.vm.provision "shell", inline: "sudo ufw allow 80/tcp"
+  # Задаем количество создаваемых машин
+  N = 3
+  (1..N).each do |machine_id|
+    config.vm.define "machine#{machine_id}" do |machine|
+      machine.vm.hostname = "machine#{machine_id}"
+      machine.vm.box_check_update = false
+      machine.vm.network "private_network", ip: "192.168.77.#{10+machine_id}"
+      
+      # Добавляем правило UFW для разрешения входящих подключений на порт 80
+      machine.vm.provision "shell", inline: "sudo ufw allow 80/tcp"
 
       machine.vm.provider "libvirt" do |libvirt|
         libvirt.memory = 2048
@@ -21,18 +23,19 @@ N = 3
 
         libvirt.storage_pool_name = "default"
         libvirt.machine_virtual_size = 10
-
       end
 
+      # Условное применение плейбуков Ansible
       if machine_id == 1
+         # Для первой машины применяем особый плейбук
          machine.vm.provision :ansible do |ansible|
-           ansible.inventory_path = "inventory.ini"
-           ansible.playbook = "playbook_machine1.yml"
+           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
+           ansible.playbook = "nginx-lab/ansible/playbook_machine1.yml"
          end
       else
          machine.vm.provision :ansible do |ansible|
-           ansible.inventory_path = "inventory.ini"
-           ansible.playbook = "playbook.yml"
+           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
+           ansible.playbook = "nginx-lab/ansible/playbook.yml"
          end
       end
     end
