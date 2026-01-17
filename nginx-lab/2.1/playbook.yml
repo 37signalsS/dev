@@ -1,0 +1,70 @@
+---
+- name: Nginx for machine1
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Install nginx using apt
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Disable the default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart Nginx
+
+    - name: Add stream block to nginx.conf
+      ansible.builtin.blockinfile:
+        path: /etc/nginx/nginx.conf
+        block: |
+          stream {
+            log_format basic '$remote_addr [$time_local] '
+                             '$protocol $status $bytes_sent $bytes_received '
+                             '$session_time "$upstream_addr"';
+
+            access_log /var/log/nginx/stream-access.log basic;
+            include /etc/nginx/stream.d/*.conf;
+          }
+
+    - name: Configure Nginx stream for TCP proxying
+      ansible.builtin.copy:
+        content: |
+         upstream mysql_master {
+             zone mysql_master_zone 64k;
+             server 192.168.77.14:3307 proxy_protocol; 
+         }
+         
+         upstream mysql_slave {
+             zone mysql_slave_zone 64k;
+             server 192.168.77.12:3308 proxy_protocol;
+             server 192.168.77.13:3309 proxy_protocol; 
+         }
+
+         server {
+             listen 6306;
+             proxy_pass mysql_master;
+             limit_conn_zone $binary_remote_addr zone=per_ip_conn:10m;
+                      limit_conn per_ip_conn 10;
+             access_log /var/log/nginx/mysql-master-access.log basic;
+             error_log /var/log/nginx/mysql-master-error.log warn;
+             status_zone mysql_master_status;
+         }         
+         
+         server {
+             listen 6307;
+             proxy_pass mysql_slave;
+             status_zone mysql_slave_status;
+         }
+        dest: /etc/nginx/stream.d/mysql.conf
+      notify: Restart Nginx
+
+  handlers:
+      - name: Restart Nginx
+        ansible.builtin.service:
+          name: nginx
+          state: restarted
+          enabled: yes

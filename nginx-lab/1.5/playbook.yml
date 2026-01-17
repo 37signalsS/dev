@@ -1,0 +1,82 @@
+---
+- name: Setup Nginx for A/B testing
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      changed_when: false
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Create Nginx configuration for A/B test
+      copy:
+        dest: /etc/nginx/conf.d/ab-test.conf
+        content: |
+          map $cookie_version $ab_test_page {
+              default /index-old.html;
+              new /index-new.html;
+          }
+
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name site1.local;
+              root /var/www/html;
+              index index.html;
+
+              location / {
+                  try_files $ab_test_page =404;
+              }
+          }
+      notify: Reload Nginx
+
+    - name: Create index-old.html
+      copy:
+        dest: /var/www/html/index-old.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Old Version</title>
+              <style>
+                  body { font-family: Arial, sans-serif; background-color: #f0f0f0; color: #333; text-align: center; padding-top: 50px; }
+                  h1 { color: #d9534f; }
+              </style>
+          </head>
+          <body>
+              <h1>Welcome to the Old Version!</h1>
+              <p>This is the default content.</p>
+              <p>You can set your cookie to 'new' to see the other version.</p>
+          </body>
+          </html>
+
+    - name: Create index-new.html
+      copy:
+        dest: /var/www/html/index-new.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>New Version</title>
+              <style>
+                  body { font-family: Arial, sans-serif; background-color: #e0f2f7; color: #333; text-align: center; padding-top: 50px; }
+                  h1 { color: #5bc0de; }
+              </style>
+          </head>
+          <body>
+              <h1>Welcome to the New Version!</h1>
+              <p>This is the A/B test content.</p>
+              <p>Your cookie 'version' is set to 'new'.</p>
+          </body>
+          </html>
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
