@@ -1,0 +1,99 @@
+---
+- name: Nginx for machine1
+  hosts: machine1
+  become: true
+
+  tasks:
+    - name: Install software using apt
+      ansible.builtin.apt:
+        name: ['nginx', 'openssl']
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Ensure web root exists
+      ansible.builtin.file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Ensure web root for ACME challenge exists (for config consistency)
+      ansible.builtin.file:
+        path: /var/www/certbot
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        
+    - name: Add vagrant user to www-data group
+      ansible.builtin.user:
+        name: vagrant
+        groups: www-data
+        append: yes
+
+    - name: Copy site content (host-specific index.html)
+      ansible.builtin.copy:
+        src: "files/html/{{ inventory_hostname }}/"
+        dest: /var/www/html/
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Remove default Nginx site configuration
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Create directory for self-signed certificates
+      ansible.builtin.file:
+        path: /etc/letsencrypt/live/site1.local
+        state: directory
+        recurse: yes
+
+    - name: Generate self-signed certificate
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/letsencrypt/live/site1.local/privkey.pem
+        -out /etc/letsencrypt/live/site1.local/fullchain.pem
+        -subj "/CN=site1.local"
+      args:
+        creates: /etc/letsencrypt/live/site1.local/privkey.pem
+
+    - name: Configure Nginx with Self-Signed Certificate
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-enabled/site1.local.conf
+        content: |
+          server {
+              listen 80;
+              server_name site1.local;
+
+              location /.well-known/acme-challenge/ {
+                  root /var/www/certbot;
+              }
+
+              location / {
+                  return 301 https://$host$request_uri;
+                }
+          }
+
+          server {
+              listen 443 ssl;
+              server_name site1.local;
+          
+              ssl_certificate /etc/letsencrypt/live/site1.local/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/site1.local/privkey.pem;
+          
+
+              root /var/www/html;
+              index index.html;
+          }
+      notify: Restart Nginx
+      
+  handlers:
+      - name: Restart Nginx
+        ansible.builtin.service:
+          name: nginx
+          state: restarted
+          enabled: yes
