@@ -1,0 +1,62 @@
+[ ca ]
+default_ca = CA_default
+
+[ CA_default ]
+dir             = .                         # Корневая директория CA
+certs           = $dir/certs                # Не используется, но должно быть
+crl_dir         = $dir/crl                  # Директория для CRL
+database        = $dir/db/index.txt         # Путь к базе данных сертификатов
+new_certs_dir   = $dir/db/newcerts          # Куда сохранять новые сертификаты
+
+certificate     = $dir/ca.crt               # Корневой сертификат CA
+serial          = $dir/db/serial            # Файл с серийным номером
+crlnumber       = $dir/db/crlnumber         # Файл с номером CRL
+crl             = $dir/crl.pem              # Текущий CRL (создается позже)
+private_key     = $dir/ca.key               # Приватный ключ CA
+RANDFILE        = $dir/db/.rand             # Файл со случайными данными
+
+default_md      = sha512                    # Алгоритм хеширования по умолчанию
+default_days    = 365                       # Срок действия сертификата по умолчанию (1 год)
+preserve        = no                        # Поля в CSR должны совпадать с полями CA
+policy          = policy_match              # Политика проверки полей
+
+# Политика, требующая совпадения страны, региона и организации
+# с данными корневого CA.
+[ policy_match ]
+countryName             = match
+stateOrProvinceName     = match
+organizationName        = match
+organizationalUnitName  = optional
+commonName              = supplied
+emailAddress            = optional
+
+[ req ]
+default_bits        = 4096                  # Длина ключа RSA по умолчанию
+default_md          = sha512                # Алгоритм хеширования
+distinguished_name  = req_distinguished_name
+x509_extensions     = v3_ca                 # Расширения для корневого CA
+prompt              = no                    # Не задавать вопросы при создании CSR
+
+[ req_distinguished_name ]
+C  = RU
+ST = Moscow
+L  = Moscow
+O  = My Private Org
+OU = IT Department
+CN = My Private Root CA
+
+# Расширения для корневого сертификата (v3_ca)
+[ v3_ca ]
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:true
+keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+
+# Расширения для сертификатов клиентов/серверов (конечных сущностей)
+[ v3_req ]
+basicConstraints       = CA:FALSE
+keyUsage               = nonRepudiation, digitalSignature, keyEncipherment
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer
+# Назначение: аутентификация сервера и/или клиента
+extendedKeyUsage       = serverAuth, clientAuth
