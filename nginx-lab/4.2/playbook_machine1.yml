@@ -1,0 +1,149 @@
+---
+- name: Nginx for machine1
+  hosts: machine1
+  become: true
+
+  tasks:
+    - name: Install software using apt
+      ansible.builtin.apt:
+        name: ['nginx', 'openssl']
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Ensure web root exists
+      ansible.builtin.file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Ensure web root for ACME challenge exists (for config consistency)
+      ansible.builtin.file:
+        path: /var/www/certbot
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        
+    - name: Add vagrant user to www-data group
+      ansible.builtin.user:
+        name: vagrant
+        groups: www-data
+        append: yes
+
+    - name: Copy site content (host-specific index.html)
+      ansible.builtin.copy:
+        src: "files/html/{{ inventory_hostname }}/"
+        dest: /var/www/html/
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Remove default Nginx site configuration
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Create directory for self-signed certificates
+      ansible.builtin.file:
+        path: /etc/letsencrypt/live/site1.local
+        state: directory
+        recurse: yes
+
+    - name: Generate self-signed certificate
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/letsencrypt/live/site1.local/privkey.pem
+        -out /etc/letsencrypt/live/site1.local/fullchain.pem
+        -subj "/CN=site1.local"
+      args:
+        creates: /etc/letsencrypt/live/site1.local/privkey.pem
+
+    - name: Create Nginx proxy cache path configuration
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/proxy_cache.conf
+        content: |
+          proxy_cache_path /var/cache/nginx/api_cache
+              levels=1:2
+              keys_zone=api_cache:10m
+              max_size=1g
+              inactive=10m
+              use_temp_path=off;
+      notify: Restart Nginx
+
+    - name: Configure Nginx with Self-Signed Certificate
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-enabled/site1.local.conf
+        content: |
+          upstream backend_upstream {
+              server 192.168.77.12;
+              server 192.168.77.13;
+          }
+
+          server {
+              listen 80;
+              server_name site1.local;
+
+              location /.well-known/acme-challenge/ {
+                  root /var/www/certbot;
+              }
+
+              location / {
+                  return 301 https://$host$request_uri;
+                }
+          }
+
+          server {
+              listen 443 ssl;
+              server_name site1.local;
+          
+              ssl_certificate /etc/letsencrypt/live/site1.local/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/site1.local/privkey.pem;
+          
+              location ~* \.(?:css|js|jpe?g|gif|png|ico|svg|woff|woff2|ttf|eot)$ {
+                  expires 1y;
+                  add_header Cache-Control "public, immutable";
+                  access_log off;
+              }
+
+              location /api/v1/data {
+                  proxy_pass http://backend_upstream;
+
+                  proxy_cache_background_update on;
+                  proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+                  proxy_cache_bypass $http_x_no_cache;
+                  proxy_cache_lock on;
+                  proxy_cache_lock_timeout 5s;
+
+                  proxy_cache api_cache;
+                  proxy_cache_valid 200 5m;
+                  proxy_cache_valid 404 1m;
+
+                  proxy_cache_key "$scheme$request_method$host$request_uri";
+
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+
+                  add_header X-Cache-Status $upstream_cache_status;
+              }
+
+              location ~ /purge(/.*) {
+                  allow 127.0.0.1;
+                  allow 192.168.77.0/24;
+                  deny all;
+                  proxy_cache_purge api_cache "$scheme$host$1";
+              }
+
+              root /var/www/html;
+              index index.html;
+          }
+      notify: Restart Nginx
+      
+  handlers:
+      - name: Restart Nginx
+        ansible.builtin.service:
+          name: nginx
+          state: restarted
+          enabled: yes

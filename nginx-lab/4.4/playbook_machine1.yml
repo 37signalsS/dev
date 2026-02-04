@@ -1,0 +1,170 @@
+---
+- name: Nginx for machine1
+  hosts: machine1
+  become: true
+
+  vars_files:
+    - vars/secrets.yml
+
+  tasks:
+    - name: Install software using apt
+      ansible.builtin.apt:
+        name: ['nginx', 'openssl', 'apache2-utils', brotli]
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Ensure web root exists
+      ansible.builtin.file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Ensure web root for ACME challenge exists (for config consistency)
+      ansible.builtin.file:
+        path: /var/www/certbot
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        
+    - name: Add vagrant user to www-data group
+      ansible.builtin.user:
+        name: vagrant
+        groups: www-data
+        append: yes
+
+    - name: Copy site content (host-specific index.html)
+      ansible.builtin.copy:
+        src: "files/html/{{ inventory_hostname }}/"
+        dest: /var/www/html/
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Create directory for self-signed certificates
+      ansible.builtin.file:
+        path: /etc/letsencrypt/live/site1.local
+        state: directory
+        recurse: yes
+
+    - name: Generate self-signed certificate
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/letsencrypt/live/site1.local/privkey.pem
+        -out /etc/letsencrypt/live/site1.local/fullchain.pem
+        -subj "/CN=site1.local"
+      args:
+        creates: /etc/letsencrypt/live/site1.local/privkey.pem
+        
+    - name: Generate css file
+      ansible.builtin.command: >
+        brotli -k -q 11 /var/www/html/file.css
+      args:
+        creates: /var/www/html/file.css.br
+
+    - name: Generate dhparam
+      ansible.builtin.command: >
+        openssl dhparam -out /etc/nginx/dhparam.pem 2048
+      args:
+        creates: /etc/nginx/dhparam.pem
+
+    - name: Copy CA certificate for mTLS
+      ansible.builtin.copy:
+        src: "ca/ca.crt"
+        dest: "/etc/nginx/ca.crt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Generate htpasswd file from vault
+      ansible.builtin.command: >
+        htpasswd -cb /etc/nginx/htpasswd vagrant '{{ htpasswd_password }}'
+      args:
+        creates: /etc/nginx/htpasswd
+      no_log: true
+
+    - name: Remove default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart Nginx
+
+    - name: Configure image format content negotiation (AVIF/WebP)
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/image-formats.conf
+        content: |
+          map $http_accept $avif_suffix {
+              default "";
+              "~*avif" ".avif";
+          }
+
+          map $http_accept $webp_suffix {
+              default "";
+              "~*webp" ".webp";
+          }
+      notify: Restart Nginx
+        
+    - name: Configure Nginx with Self-Signed Certificate
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-enabled/site1.local.conf
+        content: |
+          server {
+              listen 80;
+              server_name site1.local;
+
+              location /.well-known/acme-challenge/ {
+                  root /var/www/certbot;
+              }
+
+              location / {
+                  return 301 https://$host$request_uri;
+                }
+          }
+
+          server {
+              listen 443 ssl http2;
+              listen [::]:443 ssl http2;
+              server_name site1.local;
+              ssl_protocols TLSv1.2 TLSv1.3;
+
+              listen 443 quic reuseport;
+              listen [::]:443 quic reuseport;
+
+              http3 on;
+              add_header Alt-Svc 'h3=":443"; ma=86400';
+
+              ssl_certificate /etc/letsencrypt/live/site1.local/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/site1.local/privkey.pem;
+
+              ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+              ssl_prefer_server_ciphers off;
+
+              ssl_session_cache shared:SSL:10m;
+              ssl_session_timeout 1d;
+              ssl_session_tickets off; 
+              add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+              ssl_dhparam /etc/nginx/dhparam.pem;
+
+              root /var/www/html;
+              index index.html;
+
+              # Make client certificate verification optional at the server level
+              ssl_client_certificate /etc/nginx/ca.crt;
+              ssl_verify_client optional;
+
+                  location ~* \.(jpe?g|png|gif)$ {
+                      try_files $uri$avif_suffix $uri$webp_suffix $uri =404;
+                      add_header X-Image-Format $avif_suffix$webp_suffix;
+                      add_header Vary "Accept";
+                  }
+      notify: Restart Nginx
+      
+  handlers:
+      - name: Restart Nginx
+        ansible.builtin.service:
+          name: nginx
+          state: restarted
+          enabled: yes
